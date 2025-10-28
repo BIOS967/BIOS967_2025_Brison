@@ -4,6 +4,8 @@
 #-----                      Download & Load Packages                      -----#
 #------------------------------------------------------------------------------#
 
+if (!is.element("tidyverse", installed.packages())) install.packages("tidyverse", dep = T)
+library(tidyverse)
 if (!is.element("dplyr", installed.packages())) install.packages("dplyr", dep = T)
 library(dplyr)
 if (!is.element("httr",  installed.packages())) install.packages("httr",  dep = T)
@@ -15,51 +17,59 @@ library(readxl)
 if (!is.element("dataRetrieval", installed.packages())) install.packages("dataRetrieval", dep = T)
 library(dataRetrieval)
 
-
-#### Make sure working directory is assigned before proceeding ####    
+# Make sure working directory is assigned before proceeding #   
 
 
 #------------------------------------------------------------------------------#
 #-----                      USGS Discrete Sample Data                     -----#
 #------------------------------------------------------------------------------#
 
-# Download List & Define Analytes of Interest
+#-----          Select Analytes of Interest & Get their Pcodes            -----#
 
-# List of Parameters to query
-list2_sub <- read.table("https://help.waterdata.usgs.gov/code/parameter_cd_query?fmt=rdb&group_cd=%")
-list2_sub <- list2_sub %>% 
-  filter(grepl("nitrate|uranium|sulfate|sulfide|hydrogen|iron|dissolved oxygen", parm_nm, ignore.case = TRUE)) %>%
-  filter(!is.na(CASRN)) %>% filter(str_trim(CASRN) != "") %>% select(parm_cd)
+# Download All USGS parameter codes 
+list2_raw <- read.delim("https://help.waterdata.usgs.gov/code/parameter_cd_query?fmt=rdb&group_cd=%", 
+                        comment.char = "#", # Removes comments
+                        skip = 2, # Skips the first two lines since they are header rows we dont want :) 
+                        stringsAsFactors = FALSE) # Prevents R from converting text to factors
 
-# List of state FIPS codes to query
-states <- c("US:17", "US:19", "US:20", "US:26", "US:27", "US:29", "US:31", "US:39", "US:46", "US:55", "CA:ON")
+# Filter for only analytes of interest & select their USGS parameter codes
+list2_sub <- list2_raw %>%
+  filter(grepl("nitrate|uranium|sulfate|sulfide|hydrogen|iron|dissolved oxygen", # Analytes of interest names 
+               parm_nm,                   # The column name we look through to find the analytes 
+               ignore.case = TRUE))  %>%  # Ignore capitalization when searching so it gets more results
+  
+  filter(!is.na(CASRN) & str_trim(CASRN) != "") %>% # This removes any rows without a CASRN Number becasue I dont trust it if it dont have it
+ 
+  select(parm_cd) # Selects ONLY the parameter code column & puts it into the new dataframe
 
-# List of states used
-state_names <- c("Illinois", "Iowa", "Kansas", "Michigan", "Minnesota", 
-                 "Missouri", "Nebraska", "Ohio", "South Dakota", "Wisconsin", "Ontario")
+# List of states & FIPS codes to get data for
+states <- c("US:19", # Iowa
+            "US:20", # Kansas
+            "US:31") # Nebraska
 
-# Columns to keep from the API results
-cols_to_keep <- c("Location_Identifier", "Location_Type", "Location_State",
-                  "Location_LatitudeStandardized", "Location_LongitudeStandardized",
-                  "Location_HorzCoordStandardizedDatum", "Activity_MediaSubdivision",
-                  "Activity_StartDate", "Activity_DepthHeightMeasure", "Activity_DepthHeightMeasureUnit",
-                  "SampleCollectionMethod_Description", "Result_Characteristic",
-                  "Result_CharacteristicUserSupplied", "Result_CASNumber", "Result_Measure",
-                  "Result_MeasureUnit", "USGSpcode")
+#------------------------------------------------------------------------------#
+#--  --  --         Download Data From the USGS API R Package        --  --  --#
 
-#--  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --#
-#--  --  --     Download Data for Each State and Combine Results     --  --  --#
+                # lapply loops through each state
+analyte_list <- lapply(states, function(s) {   
+  read_waterdata_samples(usgsPCode = list2_sub$parm_cd, # Lists all Pcodes to grab
+                         stateFips = s)    })   # Lists each state individually
 
-# Use lapply to loop through each state and download data for all analytes of interest
-analyte_list <- lapply(states, function(s) 
-{read_waterdata_samples(usgsPCode = list2_sub$parm_cd, stateFips = s)}) # *WARNING* - Takes over 1 hour & is 3.4gb in size
+#------------------------------------------------------------------------------#
+#--  --  --  --  --  --     Combine / Clean Results      --  --  --  --  --  --#
 
-analyte_list_df <- bind_rows(analyte_list) %>%  # Combine results into one data frame
-  dplyr::select(all_of(cols_to_keep))           # Keep only specified columns
+analyte_list_df <- bind_rows(analyte_list) %>% # Combine results into one data frame
+  
+  dplyr::select("Location_Identifier", "Location_Type", "Location_State",       # Columns to keep from the API results
+                "Location_LatitudeStandardized", "Location_LongitudeStandardized", 
+                "Location_HorzCoordStandardizedDatum", "Activity_MediaSubdivision", 
+                "Activity_StartDate", "Activity_DepthHeightMeasure", "Activity_DepthHeightMeasureUnit", 
+                "SampleCollectionMethod_Description", "Result_Characteristic", 
+                "Result_CharacteristicUserSupplied", "Result_CASNumber", 
+                "Result_Measure", "Result_MeasureUnit", "USGSpcode")
 
-# Write to new CSV  ## Will save to the working directory
+# Save combined data as CSV
 write.csv(analyte_list_df, "USGS_MidCont_Water_Sample_Data.csv", row.names = FALSE)
-
 
 
 #------------------------------------------------------------------------------#
@@ -70,7 +80,7 @@ write.csv(analyte_list_df, "USGS_MidCont_Water_Sample_Data.csv", row.names = FAL
 analytes <- read.csv("USGS_MidCont_Water_Sample_Data.csv")
 
 
-# Nitrate *********************************************************************#
+# Nitrate ---------------------------------------------------------------------#
 
 Nitrate <- analytes %>%
   filter(grepl("nitrate", Result_Characteristic, ignore.case = TRUE)) %>%
@@ -89,7 +99,7 @@ Nitrate <- Nitrate %>%
 write.csv(Nitrate, "USGS_Discrete_Outputs/USGS_Nitrate_data.csv", row.names = FALSE)
 
 
-# Uranium *********************************************************************#
+# Uranium ---------------------------------------------------------------------#
 
 Uranium <- analytes %>%
   filter(grepl("Uranium", Result_Characteristic)) %>%
@@ -103,7 +113,7 @@ unique(Uranium$Result_MeasureUnit)
 write.csv(Uranium, "USGS_Discrete_Outputs/USGS_Uranium_data.csv", row.names = FALSE)
 
 
-# Iron ************************************************************************#
+# Iron ------------------------------------------------------------------------#
 
 Iron <- analytes %>%
   filter(grepl("Iron", Result_Characteristic)) %>%
@@ -125,7 +135,7 @@ Iron <- Iron %>%
 write.csv(Iron, "USGS_Discrete_Outputs/USGS_Iron_data.csv", row.names = FALSE)
 
 
-# Sulfate *********************************************************************#
+# Sulfate ---------------------------------------------------------------------#
 
 Sulfate <- analytes %>%
   filter(grepl("Sulfate", Result_Characteristic)) %>%
@@ -141,7 +151,7 @@ Sulfate <- Sulfate %>% filter(!is.na(Result_Measure))
 write.csv(Sulfate, "USGS_Discrete_Outputs/USGS_Sulfate_data.csv", row.names = FALSE)
 
 
-# "Acidity, (H+)" *************************************************************#
+# Acidity, (H+) ---------------------------------------------------------------#
 
 Acidity <- analytes %>%
   filter(grepl("Acidity", Result_Characteristic, ignore.case = TRUE)) %>%
@@ -154,7 +164,7 @@ unique(Acidity$Result_MeasureUnit)
 write.csv(Acidity, "USGS_Discrete_Outputs/USGS_Acidity_data.csv", row.names = FALSE)
 
 
-# "Dissolved oxygen (DO)" *****************************************************#
+# Dissolved oxygen (DO) -------------------------------------------------------#
 
 Dissolved_Oxygen <- analytes %>%
   filter(grepl("Dissolved oxygen", Result_Characteristic, ignore.case = TRUE)) %>%
