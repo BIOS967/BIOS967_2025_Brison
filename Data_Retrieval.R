@@ -122,11 +122,6 @@ write.csv(Uranium, "Data/USGS_Discrete_Outputs/USGS_Uranium_data.csv", row.names
 
 
 
-
-
-
-
-
 ################################################################################
 #------------------------------------------------------------------------------#
 #-----       Nebraska Clearing House Nitrate Data Extraction & Prep       -----#
@@ -181,6 +176,8 @@ Nitrogen <- Nitrogen %>%
 #--------------------- Save the cleaned up data to a CSV ----------------------#
 # Create & save a new CSV file
 write.csv(Nitrogen, "Ne_Nitrogen_data.csv", row.names = FALSE)
+
+
 
 
 
