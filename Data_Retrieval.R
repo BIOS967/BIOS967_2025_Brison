@@ -4,22 +4,11 @@
 #-----                      Download & Load Packages                      -----#
 #------------------------------------------------------------------------------#
 
-if (!is.element("tidyverse", installed.packages())) install.packages("tidyverse", dep = T)
-library(tidyverse)
-if (!is.element("dplyr", installed.packages())) install.packages("dplyr", dep = T)
-library(dplyr)
-if (!is.element("httr",  installed.packages())) install.packages("httr",  dep = T)
-library(httr)
-if (!is.element("readr", installed.packages())) install.packages("readr", dep = T)
-library(readr)
-if (!is.element("readxl", installed.packages())) install.packages("readxl", dep = T)
-library(readxl)
-if (!is.element("dataRetrieval", installed.packages())) install.packages("dataRetrieval", dep = T)
-library(dataRetrieval)
-
-# Make sure working directory is assigned before proceeding #   
-
-
+list <- c("tidyverse", "dplyr", "httr", "readr", "readxl", "dataRetrieval")
+for (packages in list) {
+  if (!packages %in% rownames(installed.packages())) { install.packages(packages, dependencies = TRUE) }
+  library(packages, character.only = TRUE) }
+rm(list) # Frees up memory
 
 
 ################################################################################
@@ -57,7 +46,7 @@ states <- c("US:19", # Iowa
 
                 # lapply loops through each state
 analyte_list <- lapply(states, function(s) {   
-  read_waterdata_samples(usgsPCode = list2_sub$parm_cd, # Lists all Pcodes to grab
+  read_waterdata_samples(usgsPCode = list2_sub$parm_cd, # Lists all Pcodes to grab from the list we made earlier.
                          stateFips = s)    })   # Lists each state individually
 
 #------------------------------------------------------------------------------#
@@ -102,6 +91,7 @@ Nitrate <- Nitrate %>%
 # Save as CSV
 write.csv(Nitrate, "Data/USGS_Discrete_Outputs/USGS_Nitrate_data.csv", row.names = FALSE)
 
+head(Nitrate)
 
 # Uranium ---------------------------------------------------------------------#
 
@@ -131,8 +121,8 @@ write.csv(Uranium, "Data/USGS_Discrete_Outputs/USGS_Uranium_data.csv", row.names
 
 # GET request -> download excel file
 response <- GET("https://clearinghouse.nebraska.gov/api/api/export/download")
-writeBin(content(response, "raw"), "ProcessingStuff/Raw_Data.xlsx") # Save excel file in working directory folder
-files <- "ProcessingStuff/Raw_Data.xlsx" # Read the Excel file into R
+writeBin(content(response, "raw"), "Data/Raw_Data.xlsx") # Save excel file in working directory folder
+files <- "Data/Raw_Data.xlsx" # Read the Excel file into R
 
 
 #------------------------- Load in Individual Sheets --------------------------#
@@ -175,7 +165,7 @@ Nitrogen <- Nitrogen %>%
 
 #--------------------- Save the cleaned up data to a CSV ----------------------#
 # Create & save a new CSV file
-write.csv(Nitrogen, "Ne_Nitrogen_data.csv", row.names = FALSE)
+write.csv(Nitrogen, "Data/Ne_Nitrogen_data.csv", row.names = FALSE)
 
 
 
