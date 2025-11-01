@@ -4,7 +4,7 @@
 #-----                      Download & Load Packages                      -----#
 #------------------------------------------------------------------------------#
 
-list <- c("tigris", "readr", "dplyr", "sf", "ggplot2", "units")
+list <- c("tigris", "readr", "dplyr", "sf", "ggplot2", "units", "spdep")
 for (packages in list) {
   if (!packages %in% rownames(installed.packages())) { install.packages(packages, dependencies = TRUE) }
   library(packages, character.only = TRUE) }
@@ -68,7 +68,6 @@ ne_grid_utm <- ne_grid_utm |> mutate(nitrate_class = cut(nitrate_idw,
                                                          right = TRUE))
 
 ggplot(ne_grid_utm, aes(fill = nitrate_class)) +
-  annotation_map_tile(type = "cartolight", zoomin = 1) +
   geom_sf(alpha = 1, col = NA) +
   geom_sf(data = ne_state_utm, fill = NA, col = "darkred", lwd = 1) +
   scale_fill_manual(name = "Nitrate (mg/L)",
@@ -77,6 +76,42 @@ ggplot(ne_grid_utm, aes(fill = nitrate_class)) +
                                "4 – 6.9" = "#41b6c4",
                                "7 – 10"  = "#2c7fb8", 
                                "> 10"    = "#253494"))
+
+
+################################################################################
+#------------------------------------------------------------------------------#
+#-----                             Moran's I                              -----#
+#------------------------------------------------------------------------------#
+################################################################################
+
+
+#--------------------------    Remove Duplicates    ---------------------------#
+
+nitrate_pts <- readr::read_csv("Data/Ne_Nitrogen_data.csv") |>
+  mutate(SampleDate = as.Date(SampleDate)) |>   
+  arrange(desc(SampleDate)) |>                        # newest first
+  distinct(Longitude, Latitude, .keep_all = TRUE)     # keep newest per oordinate
+
+#-------------------------------- Setup Stuff ---------------------------------#
+nitrate_utm <- nitrate_pts |>
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) |>
+  st_transform(26914) |>
+  mutate(Concentration = as.numeric(Concentration)) |>
+  filter(!is.na(Concentration))                       # don't turn NA -> 0
+
+coords <- st_coordinates(nitrate_utm)
+k <- 6
+pt_nb <- knearneigh(coords, k = k) |> knn2nb()
+pt_lw <- nb2listw(pt_nb, style = "W")
+
+#--------------------------        Moran’s I         --------------------------#
+
+moran.test(nitrate_utm$Concentration, pt_lw)
+moran.plot(nitrate_utm$Concentration, pt_lw)
+
+
+
+
 
 
 
