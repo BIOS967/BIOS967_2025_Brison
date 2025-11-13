@@ -7,8 +7,7 @@
 list <- c("tigris", "readr", "dplyr", "sf", "ggplot2", "units", "spdep")
 for (packages in list) {
   if (!packages %in% rownames(installed.packages())) { install.packages(packages, dependencies = TRUE) }
-  library(packages, character.only = TRUE) }
-rm(list) # Frees up memory
+  library(packages, character.only = TRUE) }; rm(list); rm(packages) # Frees up memory
 
 
 ################################################################################
@@ -90,7 +89,13 @@ ggplot(ne_grid_utm, aes(fill = nitrate_class)) +
 nitrate_pts <- readr::read_csv("Data/Ne_Nitrogen_data.csv") |>
   mutate(SampleDate = as.Date(SampleDate)) |>   
   arrange(desc(SampleDate)) |>                        # newest first
-  distinct(Longitude, Latitude, .keep_all = TRUE)     # keep newest per oordinate
+  # Only keep the most recent sample for each Facility ID
+  distinct(FacilityID, .keep_all = TRUE) |>
+  # Now remove any remaining duplicate coordinates
+  distinct(Longitude, Latitude, .keep_all = TRUE) |> # keep newest per cordinate
+  select(Longitude, Latitude, Concentration)
+print(nitrate_pts)
+
 
 #-------------------------------- Setup Stuff ---------------------------------#
 nitrate_utm <- nitrate_pts |>
@@ -100,8 +105,7 @@ nitrate_utm <- nitrate_pts |>
   filter(!is.na(Concentration))                       # don't turn NA -> 0
 
 coords <- st_coordinates(nitrate_utm)
-k <- 6
-pt_nb <- knearneigh(coords, k = k) |> knn2nb()
+pt_nb <- knearneigh(coords, k = 6) |> knn2nb()
 pt_lw <- nb2listw(pt_nb, style = "W")
 
 #--------------------------        Moran’s I         --------------------------#
