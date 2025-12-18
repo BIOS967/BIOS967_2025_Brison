@@ -5,9 +5,32 @@ date: "2025-11-20"
 output: html_document
 ---
 
+
 -----------------------------------------------------------------------------
 
-## *Setup*
+## *Introduction*
+In Nebraska, many regions of the state have groundwater uranium concentrations exceeding the
+U.S. Environmental Protection Agency’s (EPA) maximum contaminant level (MCL) of 10 ppb
+(Nolan & Weber, 2015). Exposure to elevated levels has been shown to increase the risk for
+developing several cancers and other life-threatening illnesses (Kieth et al., 2013). While
+uranium is naturally abundant, higher concentrations may be anthropogenic in origin, as a result
+from legacy mining practices or indirectly mobilized through agricultural nitrogen application
+(Nolan & Weber, 2015). Approximately ten years ago my lab published a paper showcasing this
+spatial association between Nitrate and Uranium in groundwater.
+## *Objectives/Methods*
+I aim to not only replicate the findings but update them from newer data sets and with the unique
+goal of generating a nitrate groundwater concentration raster file. Data will be collected from
+the Nebraska Clearing House data repository & USGS Discrete Water Data API. 
+
+<br>
+<br>
+
+Note: I didnt combine the datasets here since I am unsure if the unique ID's from both would be able to be combined properly unlike what I intially thought. So I just used the Nebraska Clearing House data for the IDW and Moran's I analysis since it had more data points in Nebraska specifically and was what the original paper used.
+
+<br>
+<br>
+
+## Setup
 Load in required packages
 ```{r, warning=FALSE, message=FALSE}
 list <- c("tidyverse", "dplyr", "httr", "readr", "readxl", "dataRetrieval", "tigris", "sf", "ggplot2", "units", "spdep")
@@ -18,6 +41,10 @@ for (packages in list) { if (
 rm(list) # Frees up memory
 ```
 
+<br>
+<br>
+
+
 -----------------------------------------------------------------------------
 # 1. Collect Data from Online Repositiories 
 ### 1.1 Download USGS Public Data  
@@ -25,9 +52,11 @@ rm(list) # Frees up memory
 The United States Geological Survey (USGS) provides a public API to access water quality data. This section of the script downloads discrete water sample data for specific analytes of interest (nitrate, uranium, sulfate, sulfide, hydrogen, iron, dissolved oxygen) from the USGS database for the states of Iowa, Kansas, and Nebraska. For the actual anaylsis performed, only nitrate data will be used, but the script is set up to download multiple analytes for potential future use.
 Nitrate has multiple P codes (Identification numbers) associated with it in the USGS database, so we have to first query for all potential names and put them into a list. 
 
+<br>
+
 #### 1.1.1 The following code downloads all of the USGS parameter codes and filters for only the analytes of interest, selecting their corresponding USGS parameter codes (P codes) and putting them in a data frame for when we call the API.
 
-```{r}
+```{r eval=FALSE, echo=TRUE}
 list2_raw <- read.delim("https://help.waterdata.usgs.gov/code/parameter_cd_query?fmt=rdb&group_cd=%", 
                         comment.char = "#", # Removes comments
                         skip = 2, # Skips the first two lines since they are header rows we dont want :) 
@@ -44,8 +73,9 @@ list2_sub <- list2_raw %>%
 
 ```
 
+<br>
 
-```{r, eval=FALSE}
+```{r, eval=FALSE, echo=TRUE}
 # List of states & FIPS codes to get data for
 states <- c("US:19", # Iowa 
             "US:20", # Kansas
@@ -70,11 +100,13 @@ write.csv(analyte_list_df, "Data/USGS_MidCont_Water_Sample_Data.csv", row.names 
 
 ```
 
-
+<br>
 
 #### 1.1.2 The following code downloads the discrete water sample data from the USGS API for the selected analytes and states, combines the results into a single data frame, and saves it as a CSV file for later analysis.
 
-```{r, eval=FALSE}
+<br>
+
+```{r, eval=FALSE, echo=TRUE}
 
 # Download Data From the USGS API R Package
 # lapply loops through each state
@@ -96,10 +128,10 @@ write.csv(analyte_list_df, "Data/USGS_MidCont_Water_Sample_Data.csv", row.names 
 
 ```
 
-
+<br>
 #### 1.1.3 The following code processes the downloaded USGS data to extract and clean individual contaminant datasets for nitrate and uranium, saving each as a separate CSV file.
-
-```{r, eval=FALSE}
+<br>
+```{r, eval=FALSE, echo=TRUE}
 # Load In Data
 analytes <- read.csv("Data/USGS_MidCont_Water_Sample_Data.csv")
 
@@ -124,22 +156,22 @@ write.csv(Nitrate, "Data/USGS_Discrete_Outputs/USGS_Nitrate_data.csv", row.names
 
 ```
 
-
+<br>
 
 
 ### 1.2 Nebraska Clearing House Nitrate Data Extraction
 The Nebraska Department of Environment and Energy (NDEE) Clearing House provides water quality data, including nitrate concentrations in groundwater wells across the state.
 #### 1.2.1 The following code sends a GET request to the Nebraska Clearing House API to download an Excel file containing water quality data, and saves it to the working directory.
-```{r, eval=FALSE}
+```{r, warning=FALSE, message=FALSE, echo=TRUE}
 # GET request -> download excel file
 response <- GET("https://clearinghouse.nebraska.gov/api/api/export/download")
 writeBin(content(response, "raw"), "Data/Raw_Data.xlsx") # Save excel file in working directory folder
 
 ```
-
+<br>
 #### 1.2.2 The following code reads in the downloaded Excel file from the Nebraska Clearing House, extracts relevant sheets, combines them to isolate nitrate data, cleans and renames columns, removes duplicate well entries by keeping only the most recent sample for each well, and saves the cleaned dataset as a CSV file.
 
-```{r, eval=FALSE}
+```{r, warning=FALSE, message=FALSE, echo=TRUE}
 files <- "Data/Raw_Data.xlsx" # Read the Excel file into R
 
 #------------------------- Load in Individual Sheets --------------------------#
@@ -184,12 +216,14 @@ Nitrogen <- Nitrogen %>%
 # Create & save a new CSV file
 write.csv(Nitrogen, "Data/Ne_Nitrogen_data.csv", row.names = FALSE)
 ```
-
+<br>
+<br>
+<br>
 
 # 2. Data Analysis and Visualization
 # 2.1 Inverse Distance Weighting (IDW) Interpolation of Nitrate Data
 # 2.1.1 Load in Nebraska Nitrate Data and Shapefile
-```{r, results = 'hide', message = FALSE, warning = FALSE, fig.show = 'hide'}
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.show = 'hide', echo=TRUE}
   # 1. Shapefile of Nebraska
 ne_state <- states(cb = TRUE) |> filter(STUSPS == "NE") |> st_as_sf()
 ne_state_utm <- st_transform(ne_state, 26914)   # UTM for NE
@@ -205,8 +239,11 @@ nitrate_utm$Concentration <- as.numeric(nitrate_utm$Concentration)
 nitrate_utm$Concentration[is.na(nitrate_utm$Concentration)] <- 0
 ```
 
+<br>
 # 2.1.2 Perform IDW Interpolation and Visualize Nitrate Concentrations
-```{r, echo= FALSE, warning=FALSE}
+
+
+```{r, warning=FALSE, message=FALSE}
 #-------------------------------   Set up IDW  --------------------------------#
 
 # Make a blank grid over the state
@@ -233,8 +270,11 @@ ne_grid_utm <- ne_grid_utm |>
   mutate(nitrate_idw = as.numeric(W %*% nitrate_utm$Concentration))
 ```
 
+<br>
 # 2.1.3 Visualize the IDW Interpolated Nitrate Concentrations
-```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+
+```{r, warning=FALSE, message=FALSE}
 #-----------------------------     Graph Map     ------------------------------#
 
 breaks <- c(-Inf, 1, 3.9, 6.9, 10, Inf)
@@ -257,9 +297,9 @@ ggplot(ne_grid_utm, aes(fill = nitrate_class)) +
 ```
 
 -----------------------------------------------------------------------------
-
+<br>
 # 2.2 Spatial Autocorrelation Analysis Using Moran's I
-```{r, echo = FALSE, message = FALSE, warning = FALSE, results = 'hide', fig.keep = 'last'}
+```{r, warning=FALSE, message=FALSE}
 #--------------------------    Remove Duplicates    ---------------------------#
 
 nitrate_pts <- readr::read_csv("Data/Ne_Nitrogen_data.csv") |>
@@ -290,12 +330,8 @@ moran.test(nitrate_utm$Concentration, pt_lw)
 moran.plot(nitrate_utm$Concentration, pt_lw)
 ```
 
-
-
-
-
-
-
-
-
-
+# Conclusions
+This analysis replicated and updated previous findings for the spatial association between nitrate and other contaminants. The IDW interpolation showed areas with nitrate levels excedding the MCL set by the EPA & the Moran's I analysis indicated significant spatial autocorrelation. 
+<br>
+<br>
+<br>
