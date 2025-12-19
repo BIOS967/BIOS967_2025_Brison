@@ -1,0 +1,343 @@
+---
+title: "R-Class Final Project"
+author: "Thomas Brison"
+date: "2025-11-20"
+output: html_document
+---
+
+
+## *Introduction*
+In Nebraska, many regions of the state have groundwater uranium concentrations exceeding the
+U.S. Environmental Protection Agency’s (EPA) maximum contaminant level (MCL) of 10 ppb
+(Nolan & Weber, 2015). Exposure to elevated levels has been shown to increase the risk for
+developing several cancers and other life-threatening illnesses (Kieth et al., 2013). While
+uranium is naturally abundant, higher concentrations may be anthropogenic in origin, as a result
+from legacy mining practices or indirectly mobilized through agricultural nitrogen application
+(Nolan & Weber, 2015). Approximately ten years ago my lab published a paper showcasing this
+spatial association between Nitrate and Uranium in groundwater.
+
+## *Objectives/Methods*
+I aim to not only replicate the findings but update them from newer data sets and with the unique
+goal of generating a nitrate groundwater concentration raster file. Data will be collected from
+the Nebraska Clearing House data repository & USGS Discrete Water Data API. 
+
+<br>
+<br>
+
+Note: I didnt combine the datasets here since I am unsure if the unique ID's from both would be able to be combined properly unlike what I intially thought. So I just used the Nebraska Clearing House data for the IDW and Moran's I analysis since it had more data points in Nebraska specifically and was what the original paper used.
+
+<br>
+<br>
+
+## Setup
+Load in required packages
+
+```{r, warning=FALSE, message=FALSE}
+library("tidyverse") 
+library("dplyr") 
+library("httr")
+library("readr")
+library("readxl")
+library("dataRetrieval")
+library("tigris")
+library("sf")
+library("ggplot2")
+library("units")
+library("spdep")
+```
+
+
+<br>
+<br>
+
+
+# 1. Collect Data from Online Repositiories 
+
+### 1.1 Download USGS Public Data  
+
+The United States Geological Survey (USGS) provides a public API to access water quality data. This section of the script downloads discrete water sample data for specific analytes of interest (nitrate, uranium, sulfate, sulfide, hydrogen, iron, dissolved oxygen) from the USGS database for the states of Iowa, Kansas, and Nebraska. For the actual anaylsis performed, only nitrate data will be used, but the script is set up to download multiple analytes for potential future use.
+Nitrate has multiple P codes (Identification numbers) associated with it in the USGS database, so we have to first query for all potential names and put them into a list. 
+
+<br>
+
+#### 1.1.1 The following code downloads all of the USGS parameter codes and filters for only the analytes of interest, selecting their corresponding USGS parameter codes (P codes) and putting them in a data frame for when we call the API.
+
+```{r, eval=FALSE, echo=TRUE}
+list2_raw <- read.delim("https://help.waterdata.usgs.gov/code/parameter_cd_query?fmt=rdb&group_cd=%", 
+                        comment.char = "#", # Removes comments
+                        skip = 2, # Skips the first two lines since they are header rows we dont want :) 
+                        stringsAsFactors = FALSE) # Prevents R from converting text to factors
+
+list2_sub <- list2_raw %>%
+  filter(grepl("nitrate|uranium|sulfate|sulfide|hydrogen|iron|dissolved oxygen", # Analytes of interest names 
+               parm_nm,                   # The column name we look through to find the analytes 
+               ignore.case = TRUE))  %>%  # Ignore capitalization when searching so it gets more results
+  
+  filter(!is.na(CASRN) & str_trim(CASRN) != "") %>% # This removes any rows without a CASRN Number becasue I dont trust it if it dont have it
+ 
+  select(parm_cd) # Selects ONLY the parameter code column & puts it into the new dataframe
+
+```
+
+<br>
+
+```{r, eval=FALSE, echo=TRUE}
+# List of states & FIPS codes to get data for
+states <- c("US:19", # Iowa 
+            "US:20", # Kansas
+            "US:31") # Nebraska
+
+# lapply loops through each state
+analyte_list <- lapply(states, function(s) {   
+  read_waterdata_samples(usgsPCode = list2_sub$parm_cd, # Lists all Pcodes to grab from the list we made earlier.
+                         stateFips = s)    })   # Lists each state individually
+
+analyte_list_df <- bind_rows(analyte_list) %>% # Combine results into one data frame
+  dplyr::select("Location_Identifier", "Location_Type", "Location_State", # Columns to keep from the API data
+                "Location_LatitudeStandardized", "Location_LongitudeStandardized", 
+                "Location_HorzCoordStandardizedDatum", "Activity_MediaSubdivision", 
+                "Activity_StartDate", "Activity_DepthHeightMeasure", "Activity_DepthHeightMeasureUnit", 
+                "SampleCollectionMethod_Description", "Result_Characteristic", 
+                "Result_CharacteristicUserSupplied", "Result_CASNumber", 
+                "Result_Measure", "Result_MeasureUnit", "USGSpcode")
+
+# Save combined data as CSV
+write.csv(analyte_list_df, "Data/USGS_MidCont_Water_Sample_Data.csv", row.names = FALSE)
+
+```
+
+<br>
+
+#### 1.1.2 The following code downloads the discrete water sample data from the USGS API for the selected analytes and states, combines the results into a single data frame, and saves it as a CSV file for later analysis.
+
+<br>
+
+```{r, eval=FALSE, echo=TRUE}
+
+# Download Data From the USGS API R Package
+# lapply loops through each state
+analyte_list <- lapply(states, function(s) {   
+  read_waterdata_samples(usgsPCode = list2_sub$parm_cd, # Lists all Pcodes to grab from the list we made earlier.
+                         stateFips = s)    })   # Lists each state individually
+
+analyte_list_df <- bind_rows(analyte_list) %>% # Combine results into one data frame
+  dplyr::select("Location_Identifier", "Location_Type", "Location_State",       # Columns to keep from the API results
+                "Location_LatitudeStandardized", "Location_LongitudeStandardized", 
+                "Location_HorzCoordStandardizedDatum", "Activity_MediaSubdivision", 
+                "Activity_StartDate", "Activity_DepthHeightMeasure", "Activity_DepthHeightMeasureUnit", 
+                "SampleCollectionMethod_Description", "Result_Characteristic", 
+                "Result_CharacteristicUserSupplied", "Result_CASNumber", 
+                "Result_Measure", "Result_MeasureUnit", "USGSpcode")
+
+# Save combined data as CSV
+write.csv(analyte_list_df, "Data/USGS_MidCont_Water_Sample_Data.csv", row.names = FALSE)
+
+```
+
+<br>
+#### 1.1.3 The following code processes the downloaded USGS data to extract and clean individual contaminant datasets for nitrate and uranium, saving each as a separate CSV file.
+<br>
+```{r, eval=FALSE, echo=TRUE}
+# Load In Data
+analytes <- read.csv("Data/USGS_MidCont_Water_Sample_Data.csv")
+
+
+# Nitrate
+Nitrate <- analytes %>%
+  filter(grepl("nitrate", Result_Characteristic, ignore.case = TRUE)) %>%
+  filter(Activity_StartDate >= as.Date("2000-01-01")) 
+
+# Some of the nitrate data uses different units so this changes it
+# convert ug/L units to mg/L, remove "mg/kg" and NA values
+Nitrate <- Nitrate %>%
+  mutate(Result_Measure = case_when(
+    Result_MeasureUnit == "ug/L" ~ Result_Measure / 1000,
+    Result_MeasureUnit == "mg/L" ~ Result_Measure,
+    TRUE ~ NA_real_)) %>%
+  filter(!is.na(Result_Measure)) %>%
+  mutate(Result_MeasureUnit = "mg/L")
+
+# Save cleaned up data as CSV
+write.csv(Nitrate, "Data/USGS_Discrete_Outputs/USGS_Nitrate_data.csv", row.names = FALSE)
+
+```
+
+<br>
+
+
+### 1.2 Nebraska Clearing House Nitrate Data Extraction
+The Nebraska Department of Environment and Energy (NDEE) Clearing House provides water quality data, including nitrate concentrations in groundwater wells across the state.
+#### 1.2.1 The following code sends a GET request to the Nebraska Clearing House API to download an Excel file containing water quality data, and saves it to the working directory.
+```{r, eval=F, warning=FALSE, message=FALSE, echo=TRUE}
+# GET request -> download excel file
+response <- GET("https://clearinghouse.nebraska.gov/api/api/export/download")
+writeBin(content(response, "raw"), "Data/Raw_Data.xlsx") # Save excel file in working directory folder
+
+```
+<br>
+#### 1.2.2 The following code reads in the downloaded Excel file from the Nebraska Clearing House, extracts relevant sheets, combines them to isolate nitrate data, cleans and renames columns, removes duplicate well entries by keeping only the most recent sample for each well, and saves the cleaned dataset as a CSV file.
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE}
+files <- "Data/Raw_Data.xlsx" # Read the Excel file into R
+
+#------------------------- Load in Individual Sheets --------------------------#
+# Load required sheets from downloaded excel doc.
+XYcord      <- read_excel(files, sheet = "Facility")
+SampleDates <- read_excel(files, sheet = "Sample")
+Results     <- read_excel(files, sheet = "Result")
+
+#------------------------------  Combine Sheets  ------------------------------#
+#Join "SampleDates" to Results by the "SampleID" column
+Nitrogen <- merge(Results, SampleDates, by = "SampleID")
+
+# Remove all numbers besides 22 (nitrates designation) from "ParamID" column
+Nitrogen <- Nitrogen[Nitrogen$ParamID == 22, ]
+
+#Join x/y coordinates to the nitrate data
+Nitrogen <- Nitrogen %>% rename(FacilityID = FacilityID.x)
+Nitrogen <- Nitrogen %>% left_join(XYcord, by = "FacilityID")
+
+#--------------------- Rename and Select Columns to Keep ----------------------#
+Nitrogen <- Nitrogen %>% 
+  rename( Latitude = `Latitude (Decimal Degrees)`, # rename columns to more manageable names...
+          Longitude = `Longitude (Decimal Degrees)`,
+          WellDepth = `Well Depth (Feet)`,
+          Clearinghouse = `Clearinghouse Number`,
+          DNR_Well_ID = `DNR Well ID`,
+          DNR_Reg_Num = `DNR Registration Number`) %>%
+  dplyr::select(FacilityID, SampleID, Concentration, # need to specify the dplyr package here to avoid conflicts with other packages
+                Units, SampleDate, SampleName, 
+                Latitude, Longitude, WellDepth, 
+                Clearinghouse, DNR_Well_ID, DNR_Reg_Num)
+
+#----------------------- Remove Duplicate Well Entries ------------------------#
+#There are alot of wells with multiple samples so I want to keep only the most recent ones
+Nitrogen <- Nitrogen %>% 
+  mutate(SampleDate = mdy_hms(SampleDate)) %>% #Step 1: Convert SampleDate to a simpler date/time format
+  arrange(FacilityID, desc(SampleDate)) %>%    #Step 2: Arrange by FacilityID and SampleDate (most recent samples first)
+  distinct(FacilityID, .keep_all = TRUE)       #Step 3: Keep only the first (most recent) row for every unique FacilityID
+
+
+#--------------------- Save the cleaned up data to a CSV ----------------------#
+# Create & save a new CSV file
+write.csv(Nitrogen, "Data/Ne_Nitrogen_data.csv", row.names = FALSE)
+```
+<br>
+<br>
+<br>
+
+# 2. Data Analysis and Visualization
+# 2.1 Inverse Distance Weighting (IDW) Interpolation of Nitrate Data
+# 2.1.1 Load in Nebraska Nitrate Data and Shapefile
+```{r, results = 'hide', message = FALSE, warning = FALSE, fig.show = 'hide', echo=TRUE}
+  # 1. Shapefile of Nebraska
+ne_state <- states(cb = TRUE) |> filter(STUSPS == "NE") |> st_as_sf()
+ne_state_utm <- st_transform(ne_state, 26914)   # UTM for NE
+
+  # 2. Load in & Make points from the CSV Files
+nitrate_pts <- read_csv("Data/Ne_Nitrogen_data.csv")
+nitrate_utm <- nitrate_pts |> st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) |> 
+  st_transform(26914)
+
+# Also Fix Error with the file
+# Makes Concentration a numeric & remove NAs added by the coercion or something like that idk...
+nitrate_utm$Concentration <- as.numeric(nitrate_utm$Concentration)
+nitrate_utm$Concentration[is.na(nitrate_utm$Concentration)] <- 0
+```
+
+<br>
+# 2.1.2 Perform IDW Interpolation and Visualize Nitrate Concentrations
+
+
+```{r, warning=FALSE, message=FALSE}
+#-------------------------------   Set up IDW  --------------------------------#
+
+# Make a blank grid over the state
+ne_grid_utm <- ne_state_utm |> 
+  st_make_grid(cellsize = 5000) |>
+  st_as_sf() |>
+  st_intersection(ne_state_utm) |>
+  mutate(grid_id = dplyr::row_number())
+
+# sample locations (grid centroids)
+ne_samp_utm <- ne_grid_utm |> st_centroid()
+
+# distance matrix (gridpoints x nitrate points)
+dmat <- st_distance(ne_samp_utm, nitrate_utm) |> units::drop_units()
+
+# weight matrix: inverse distance^3, row-normalized
+rownorm <- \(x) sweep(x, 1, rowSums(x), "/")
+W <- rownorm(dmat^-3)
+
+#-----------------------------  Run IDW Analysis ------------------------------#
+
+# IDW interpolation: result is numeric
+ne_grid_utm <- ne_grid_utm |>
+  mutate(nitrate_idw = as.numeric(W %*% nitrate_utm$Concentration))
+```
+
+<br>
+# 2.1.3 Visualize the IDW Interpolated Nitrate Concentrations
+
+
+```{r, warning=FALSE, message=FALSE}
+#-----------------------------     Graph Map     ------------------------------#
+
+breaks <- c(-Inf, 1, 3.9, 6.9, 10, Inf)
+labels <- c("< 1", "1 – 3.9", "4 – 6.9", "7 – 10", "> 10")
+
+ne_grid_utm <- ne_grid_utm |> mutate(nitrate_class = cut(nitrate_idw, 
+                                                         breaks = breaks, 
+                                                         labels = labels, 
+                                                         right = TRUE))
+
+ggplot(ne_grid_utm, aes(fill = nitrate_class)) +
+  geom_sf(alpha = 1, col = NA) +
+  geom_sf(data = ne_state_utm, fill = NA, col = "darkred", lwd = 1) +
+  scale_fill_manual(name = "Nitrate (mg/L)",
+                    values = c("< 1"     = "#ffffcc",
+                               "1 – 3.9" = "#a1dab4",
+                               "4 – 6.9" = "#41b6c4",
+                               "7 – 10"  = "#2c7fb8", 
+                               "> 10"    = "#253494"))
+```
+
+-----------------------------------------------------------------------------
+<br>
+# 2.2 Spatial Autocorrelation Analysis Using Moran's I
+```{r, warning=FALSE, message=FALSE}
+#--------------------------    Remove Duplicates    ---------------------------#
+
+nitrate_pts <- readr::read_csv("Data/Ne_Nitrogen_data.csv") |>
+  mutate(SampleDate = as.Date(SampleDate)) |>   
+  arrange(desc(SampleDate)) |>                        # newest first
+  # Only keep the most recent sample for each Facility ID
+  distinct(FacilityID, .keep_all = TRUE) |>
+  # Now remove any remaining duplicate coordinates
+  distinct(Longitude, Latitude, .keep_all = TRUE) |> # keep newest per cordinate
+  select(Longitude, Latitude, Concentration)
+print(nitrate_pts)
+
+
+#-------------------------------- Setup Stuff ---------------------------------#
+nitrate_utm <- nitrate_pts |>
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) |>
+  st_transform(26914) |>
+  mutate(Concentration = as.numeric(Concentration)) |>
+  filter(!is.na(Concentration))                       # don't turn NA -> 0
+
+coords <- st_coordinates(nitrate_utm)
+pt_nb <- knearneigh(coords, k = 6) |> knn2nb()
+pt_lw <- nb2listw(pt_nb, style = "W")
+
+#--------------------------        Moran’s I         --------------------------#
+
+moran.test(nitrate_utm$Concentration, pt_lw)
+moran.plot(nitrate_utm$Concentration, pt_lw)
+```
+
+# Conclusions
+This analysis replicated and updated previous findings for the spatial association between nitrate and other contaminants. The IDW interpolation showed areas with nitrate levels excedding the MCL set by the EPA & the Moran's I analysis indicated significant spatial autocorrelation. 
+<br>
+<br>
+<br>
